@@ -12,9 +12,6 @@ use Gedmo\Tool\Wrapper\AbstractWrapper;
  * for sluggable behavior
  *
  * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
- * @package Gedmo\Sluggable\Mapping\Event\Adapter
- * @subpackage ORM
- * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
 final class ORM extends BaseAdapterORM implements SluggableAdapter
@@ -32,8 +29,19 @@ final class ORM extends BaseAdapterORM implements SluggableAdapter
             ->where($qb->expr()->like(
                 'rec.' . $config['slug'],
                 $qb->expr()->literal($slug . '%'))
-        )
+            )
         ;
+
+        // use the unique_base to restrict the uniqueness check
+        if ($config['unique'] && isset($config['unique_base'])) {
+            if ($ubase = $wrapped->getPropertyValue($config['unique_base'])) {
+                $qb->andWhere('rec.' . $config['unique_base'] . ' = :unique_base');
+                $qb->setParameter(':unique_base', $ubase);
+            } else {
+                $qb->andWhere($qb->expr()->isNull('rec.' . $config['unique_base']));
+            }
+        }
+
         // include identifiers
         foreach ((array)$wrapped->getIdentifier(false) as $id => $value) {
             if (!$meta->isIdentifier($config['slug'])) {

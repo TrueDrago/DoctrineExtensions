@@ -16,7 +16,6 @@ use Sortable\Fixture\Event;
  * These are tests for sluggable behavior
  *
  * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
- * @package Gedmo.Sluggable
  * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
@@ -40,8 +39,6 @@ class SortableTest extends BaseTestCaseORM
         $evm->addEventSubscriber(new SortableListener);
 
         $this->getMockSqliteEntityManager($evm);
-        //$this->startQueryLog();
-
         $this->populate();
     }
 
@@ -125,6 +122,10 @@ class SortableTest extends BaseTestCaseORM
         $this->assertEquals('Node4', $nodes[2]->getName());
         $this->assertEquals('Node2', $nodes[3]->getName());
         $this->assertEquals('Node5', $nodes[4]->getName());
+
+        for ($i = 0; $i < count($nodes); $i++) {
+            $this->assertSame($i, $nodes[$i]->getPosition());
+        }
     }
 
     /**
@@ -159,6 +160,7 @@ class SortableTest extends BaseTestCaseORM
         $node2->setPosition(1);
         $this->em->persist($node2);
         $this->em->flush();
+        $this->em->clear(); // to reload from database
 
         $repo = $this->em->getRepository(self::NODE);
         $nodes = $repo->getBySortableGroups(array('path' => '/'));
@@ -168,6 +170,10 @@ class SortableTest extends BaseTestCaseORM
         $this->assertEquals('Node2', $nodes[2]->getName());
         $this->assertEquals('Node3', $nodes[3]->getName());
         $this->assertEquals('Node5', $nodes[4]->getName());
+
+        for ($i = 0; $i < count($nodes); $i++) {
+            $this->assertSame($i, $nodes[$i]->getPosition());
+        }
     }
 
     /**
@@ -198,7 +204,7 @@ class SortableTest extends BaseTestCaseORM
     }
 
     /**
-     * test
+     * @test
      */
     public function shouldGroupByAssociation()
     {
@@ -369,6 +375,32 @@ class SortableTest extends BaseTestCaseORM
         $this->assertEquals(0, $author1->getPosition());
         $this->assertEquals(1, $author2->getPosition());
         $this->assertEquals(0, $author3->getPosition());
+
+        //update position
+        $author3->setPaper($paper1);
+        $author3->setPosition(0); // same as before, no changes
+        $this->em->persist($author3);
+        $this->em->flush();
+
+        $this->assertEquals(0, $author1->getPosition());
+        $this->assertEquals(1, $author2->getPosition());
+        // it is 2 because the changeset for position is NONE and theres a new group, it will recalculate
+        $this->assertEquals(2, $author3->getPosition());
+
+        // this is failing for whatever reasons
+        $author3->setPosition(0);
+        $this->em->persist($author3);
+        $this->em->flush();
+
+        $this->em->clear(); // @TODO: this should not be required
+
+        $author1 = $this->em->find(self::AUTHOR, $author1->getId());
+        $author2 = $this->em->find(self::AUTHOR, $author2->getId());
+        $author3 = $this->em->find(self::AUTHOR, $author3->getId());
+
+        $this->assertEquals(1, $author1->getPosition());
+        $this->assertEquals(2, $author2->getPosition());
+        $this->assertEquals(0, $author3->getPosition());
     }
 
     /**
@@ -395,6 +427,33 @@ class SortableTest extends BaseTestCaseORM
             $this->em->persist($nodes[$i-1]);
         }
         $this->em->flush();
+    }
+
+    /**
+     * @test
+     */
+    function positionShouldBeTheSameAfterFlush()
+    {
+        $nodes = array();
+        for ($i = 2; $i <= 10; $i++) {
+            $node = new Node();
+            $node->setName("Node".$i);
+            $node->setPath("/");
+            $this->em->persist($node);
+            $nodes[] = $node;
+        }
+        $this->em->flush();
+
+        $node1 = $this->em->find(self::NODE, $this->nodeId);
+        $node1->setPosition(5);
+
+        $this->em->flush();
+
+        $this->assertEquals(5, $node1->getPosition());
+
+        $this->em->detach($node1);
+        $node1 = $this->em->find(self::NODE, $this->nodeId);
+        $this->assertEquals(5, $node1->getPosition());
     }
 
     protected function getUsedEntityFixtures()

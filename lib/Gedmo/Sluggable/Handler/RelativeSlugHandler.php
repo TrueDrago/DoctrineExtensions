@@ -16,9 +16,6 @@ use Doctrine\Common\Persistence\Mapping\ClassMetadata;
 * where path separator separates the relative slug
 *
 * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
-* @package Gedmo.Sluggable.Handler
-* @subpackage RelativeSlugHandler
-* @link http://www.gediminasm.org
 * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
 */
 class RelativeSlugHandler implements SlugHandlerInterface
@@ -131,5 +128,13 @@ class RelativeSlugHandler implements SlugHandlerInterface
         }
         $this->sluggable->setTransliterator($this->originalTransliterator);
         return $result;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function handlesUrlization()
+    {
+        return true;
     }
 }

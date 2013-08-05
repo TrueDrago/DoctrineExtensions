@@ -16,9 +16,6 @@ use Doctrine\ORM\Query,
  * the strategy used by listener
  *
  * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
- * @package Gedmo.Tree.Entity.Repository
- * @subpackage NestedTreeRepository
- * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
 class NestedTreeRepository extends AbstractTreeRepository
@@ -794,10 +791,10 @@ class NestedTreeRepository extends AbstractTreeRepository
     }
 
     /**
+     * NOTE: flush your entity manager after
+     *
      * Tries to recover the tree
      *
-     * @todo implement
-     * @throws RuntimeException - if something fails in transaction
      * @return void
      */
     public function recover()
@@ -805,7 +802,33 @@ class NestedTreeRepository extends AbstractTreeRepository
         if ($this->verify() === true) {
             return;
         }
-        // not yet implemented
+        $meta = $this->getClassMetadata();
+        $config = $this->listener->getConfiguration($this->_em, $meta->name);
+        $self = $this;
+        $em = $this->_em;
+
+        $doRecover = function($root, &$count) use($meta, $config, $self, $em, &$doRecover) {
+            $lft = $count++;
+            foreach ($self->getChildren($root, true) as $child) {
+                $doRecover($child, $count);
+            }
+            $rgt = $count++;
+            $meta->getReflectionProperty($config['left'])->setValue($root, $lft);
+            $meta->getReflectionProperty($config['right'])->setValue($root, $rgt);
+            $em->persist($root);
+        };
+
+        if (isset($config['root'])) {
+            foreach ($this->getRootNodes() as $root) {
+                $count = 1; // reset on every root node
+                $doRecover($root, $count);
+            }
+        } else {
+            $count = 1;
+            foreach($this->getChildren(null, true) as $root) {
+                $doRecover($root, $count);
+            }
+        }
     }
 
     /**

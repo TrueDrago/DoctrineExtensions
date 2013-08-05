@@ -2,8 +2,8 @@
 
 namespace Gedmo\Loggable\Mapping\Driver;
 
-use Doctrine\ORM\Mapping\ClassMetadata;
-use Gedmo\Mapping\Driver\AbstractAnnotationDriver,
+use Doctrine\Common\Persistence\Mapping\ClassMetadata,
+    Gedmo\Mapping\Driver\AbstractAnnotationDriver,
     Gedmo\Exception\InvalidMappingException;
 
 /**
@@ -14,9 +14,6 @@ use Gedmo\Mapping\Driver\AbstractAnnotationDriver,
  *
  * @author Boussekeyt Jules <jules.boussekeyt@gmail.com>
  * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
- * @package Gedmo.Loggable.Mapping.Driver
- * @subpackage Annotation
- * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
 class Annotation extends AbstractAnnotationDriver

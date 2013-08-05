@@ -15,9 +15,6 @@ use Doctrine\ORM\Proxy\Proxy;
  * since it does some additional calculations on persisted objects.
  *
  * @author Lukas Botsch <lukas.botsch@gmail.com>
- * @subpackage SortableListener
- * @package Gedmo.Sortable
- * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
 class SortableListener extends MappedEventSubscriber
@@ -85,7 +82,6 @@ class SortableListener extends MappedEventSubscriber
                 $this->processInsert($om, $config, $meta, $object);
             }
         }
-
         $this->processRelocations($om);
     }
 
@@ -123,8 +119,10 @@ class SortableListener extends MappedEventSubscriber
     private function processInsert($em, $config, $meta, $object)
     {
         $uow = $em->getUnitOfWork();
-
+        
+        $old = $meta->getReflectionProperty($config['position'])->getValue($object);
         $newPosition = $meta->getReflectionProperty($config['position'])->getValue($object);
+        
         if (is_null($newPosition)) {
             $newPosition = -1;
         }
@@ -168,8 +166,10 @@ class SortableListener extends MappedEventSubscriber
         call_user_func_array(array($this, 'addRelocation'), $relocation);
 
         // Set new position
-        $meta->getReflectionProperty($config['position'])->setValue($object, $newPosition);
-        $uow->recomputeSingleEntityChangeSet($meta, $object);
+        if ($old < 0 || is_null($old)) {
+            $meta->getReflectionProperty($config['position'])->setValue($object, $newPosition);
+            $uow->recomputeSingleEntityChangeSet($meta, $object);
+        }
     }
 
     /**
@@ -182,22 +182,34 @@ class SortableListener extends MappedEventSubscriber
 
         $changed = false;
         $changeSet = $uow->getEntityChangeSet($object);
-        if (!array_key_exists($config['position'], $changeSet)) {
-            return;
-        }
-        $oldPosition = $changeSet[$config['position']][0];
-        $newPosition = $changeSet[$config['position']][1];
-
-        $changed = $changed || $oldPosition != $newPosition;
 
         // Get groups
         $groups = $this->getGroups($meta, $config, $object);
-        foreach ($groups as $group) {
-            $changed = $changed ||
-                (array_key_exists($group, $changeSet)
-                    && $changeSet[$group][0] != $changeSet[$group][1]);
+
+        // handle old groups
+        foreach (array_keys($groups) as $group) {
+            if(array_key_exists($group, $changeSet))
+            {
+                $changed = true;
+
+                $oldGroups = array($group => $changeSet[$group][0]);
+                $oldHash = $this->getHash($meta, $oldGroups, $object, $config);
+                $this->maxPositions[$oldHash] = $this->getMaxPosition($em, $meta, $config, $object, $oldGroups);
+                $this->addRelocation($oldHash, $config['useObjectClass'], $oldGroups, $meta->getReflectionProperty($config['position'])->getValue($object) + 1, $this->maxPositions[$oldHash] + 1, -1, true);
+            }
         }
 
+        if (array_key_exists($config['position'], $changeSet)) {
+            // position was manually updated
+            $oldPosition = $changeSet[$config['position']][0];
+            $newPosition = $changeSet[$config['position']][1];
+            $changed = $changed || $oldPosition != $newPosition;
+        } elseif ($changed) {
+            // group has changed, so position has to be recalculated
+            $oldPosition = -1;
+            $newPosition = -1;
+            // specific case
+        }
         if (!$changed) return;
 
         // Get hash
@@ -216,7 +228,6 @@ class SortableListener extends MappedEventSubscriber
 
         // Set position to max position if it is too big
         $newPosition = min(array($this->maxPositions[$hash] + 1, $newPosition));
-
         // Compute relocations
         /*
         CASE 1: shift backwards
@@ -233,7 +244,10 @@ class SortableListener extends MappedEventSubscriber
         |--node1--|--node3--|--node4--|--node2--|--node5--|
         */
         $relocation = null;
-        if ($newPosition < $oldPosition) {
+        if ($oldPosition === -1) {
+            // special case when group changes
+            $relocation = array($hash, $config['useObjectClass'], $groups, $newPosition, -1, +1);
+        } elseif ($newPosition < $oldPosition) {
             $relocation = array($hash, $config['useObjectClass'], $groups, $newPosition, $oldPosition, +1);
         } elseif ($newPosition > $oldPosition) {
             $relocation = array($hash, $config['useObjectClass'], $groups, $oldPosition + 1, $newPosition + 1, -1);
@@ -315,15 +329,22 @@ class SortableListener extends MappedEventSubscriber
                 $meta = $em->getClassMetadata($relocation['name']);
 
                 // now walk through the unit of work in memory objects and sync those
-                foreach ($em->getUnitOfWork()->getIdentityMap() as $className => $objects) {
+                $uow = $em->getUnitOfWork();
+                foreach ($uow->getIdentityMap() as $className => $objects) {
                     // for inheritance mapped classes, only root is always in the identity map
-                    if ($className !== $meta->rootEntityName) {
+                    if ($className !== $meta->rootEntityName || !$this->getConfiguration($em, $className)) {
                         continue;
                     }
                     foreach ($objects as $object) {
                         if ($object instanceof Proxy && !$object->__isInitialized__) {
                             continue;
                         }
+
+                        // if the entity's position is already changed, stop now
+                        if (array_key_exists($config['position'], $uow->getEntityChangeSet($object))) {
+                            continue;
+                        }
+
                         $oid = spl_object_hash($object);
                         $pos = $meta->getReflectionProperty($config['position'])->getValue($object);
                         $matches = $pos >= $delta['start'];
@@ -366,13 +387,16 @@ class SortableListener extends MappedEventSubscriber
         return md5($data);
     }
 
-    private function getMaxPosition($em, $meta, $config, $object)
+    private function getMaxPosition($em, $meta, $config, $object, array $groups = array())
     {
         $uow = $em->getUnitOfWork();
         $maxPos = null;
 
         // Get groups
-        $groups = $this->getGroups($meta, $config, $object);
+        if(!sizeof($groups))
+        {
+            $groups = $this->getGroups($meta, $config, $object);
+        }
 
         // Get hash
         $hash = $this->getHash($meta, $groups, $object, $config);
@@ -391,25 +415,23 @@ class SortableListener extends MappedEventSubscriber
             }
         }
 
-        $groups = isset($config["groups"]) ? $config["groups"] : array();
         $qb = $em->createQueryBuilder();
         $qb->select('MAX(n.'.$config['position'].')')
            ->from($config['useObjectClass'], 'n');
-        $qb = $this->addGroupWhere($qb, $groups, $meta, $object);
+        $qb = $this->addGroupWhere($qb, $groups);
         $query = $qb->getQuery();
         $query->useQueryCache(false);
         $query->useResultCache(false);
         $res = $query->getResult();
         $maxPos = $res[0][1];
         if (is_null($maxPos)) $maxPos = -1;
-        return $maxPos;
+        return intval($maxPos);
     }
 
-    private function addGroupWhere($qb, $groups, $meta, $object)
+    private function addGroupWhere($qb, $groups)
     {
         $i = 1;
-        foreach ($groups as $group) {
-            $value = $meta->getReflectionProperty($group)->getValue($object);
+        foreach ($groups as $group => $value) {
             $whereFunc = is_null($qb->getDQLPart('where')) ? 'where' : 'andWhere';
             if (is_null($value)) {
                 $qb->{$whereFunc}($qb->expr()->isNull('n.'.$group));
@@ -425,7 +447,7 @@ class SortableListener extends MappedEventSubscriber
     /**
      * Add a relocation rule
      * @param string $hash The hash of the sorting group
-     * @param $meta The objects meta data
+     * @param string $class The object class
      * @param array $groups The sorting groups
      * @param int $start Inclusive index to start relocation from
      * @param int $stop Exclusive index to stop relocation at

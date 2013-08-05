@@ -38,9 +38,6 @@ use Doctrine\Common\Persistence\ObjectManager,
  *
  * @author Gustavo Falco <comfortablynumb84@gmail.com>
  * @author Gediminas Morkevicius <gediminas.morkevicius@gmail.com>
- * @package Gedmo.Uploadable
- * @subpackage UploadableListener
- * @link http://www.gediminasm.org
  * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
  */
 class UploadableListener extends MappedEventSubscriber
@@ -172,7 +169,7 @@ class UploadableListener extends MappedEventSubscriber
         // Do we need to remove any files?
         foreach ($ea->getScheduledObjectDeletions($uow) as $object) {
             $meta = $om->getClassMetadata(get_class($object));
-            
+
             if ($config = $this->getConfiguration($om, $meta->name)) {
                 if (isset($config['uploadable']) && $config['uploadable']) {
                     $this->pendingFileRemovals[] = $this->getFilePath($meta, $config, $object);
@@ -284,12 +281,13 @@ class UploadableListener extends MappedEventSubscriber
         $path = $config['path'];
 
         if ($path === '') {
+            $defaultPath = $this->getDefaultPath();
             if ($config['pathMethod'] !== '') {
                 $pathMethod = $refl->getMethod($config['pathMethod']);
                 $pathMethod->setAccessible(true);
-                $path = $pathMethod->invoke($object);
-            } else if ($this->getDefaultPath() !== null) {
-                $path = $this->getDefaultPath();
+                $path = $pathMethod->invokeArgs($object, array($defaultPath));
+            } else if ($defaultPath !== null) {
+                $path = $defaultPath;
             } else {
                 $msg = 'You have to define the path to save files either in the listener, or in the class "%s"';
 
@@ -300,8 +298,7 @@ class UploadableListener extends MappedEventSubscriber
         }
 
         Validator::validatePath($path);
-
-        $path = substr($path, strlen($path) - 1) === DIRECTORY_SEPARATOR ? substr($path, 0, strlen($path) - 2) : $path;
+        $path = rtrim($path, '\/');
 
         if ($config['fileMimeTypeField']) {
             $fileMimeTypeField = $refl->getProperty($config['fileMimeTypeField']);
@@ -338,7 +335,7 @@ class UploadableListener extends MappedEventSubscriber
                 $generatorClass = $config['filenameGenerator'];
         }
 
-        $info = $this->moveFile($fileInfo, $path, $generatorClass, $config['allowOverwrite'], $config['appendNumber']);
+        $info = $this->moveFile($fileInfo, $path, $generatorClass, $config['allowOverwrite'], $config['appendNumber'], $object);
 
         // We override the mime type with the guessed one
         $info['fileMimeType'] = $mime;
@@ -428,6 +425,7 @@ class UploadableListener extends MappedEventSubscriber
      * @param bool $filenameGeneratorClass
      * @param bool $overwrite
      * @param bool $appendNumber
+     * @param $object
      * @return array
      * @throws \Gedmo\Exception\UploadableUploadException
      * @throws \Gedmo\Exception\UploadableNoFileException
@@ -439,7 +437,7 @@ class UploadableListener extends MappedEventSubscriber
      * @throws \Gedmo\Exception\UploadableNoTmpDirException
      * @throws \Gedmo\Exception\UploadableCantWriteException
      */
-    public function moveFile(FileInfoInterface $fileInfo, $path, $filenameGeneratorClass = false, $overwrite = false, $appendNumber = false)
+    public function moveFile(FileInfoInterface $fileInfo, $path, $filenameGeneratorClass = false, $overwrite = false, $appendNumber = false, $object)
     {
         if ($fileInfo->getError() > 0) {
             switch ($fileInfo->getError()) {
@@ -482,13 +480,14 @@ class UploadableListener extends MappedEventSubscriber
             'fileName'          => '',
             'fileExtension'     => '',
             'fileWithoutExt'    => '',
+            'origFileName'      => '',
             'filePath'          => '',
             'fileMimeType'      => $fileInfo->getType(),
             'fileSize'          => $fileInfo->getSize()
         );
 
         $info['fileName'] = basename($fileInfo->getName());
-        $info['filePath'] = $path.DIRECTORY_SEPARATOR.$info['fileName'];
+        $info['filePath'] = $path.'/'.$info['fileName'];
 
         $hasExtension = strrpos($info['fileName'], '.');
 
@@ -499,15 +498,19 @@ class UploadableListener extends MappedEventSubscriber
             $info['fileWithoutExt'] = $info['fileName'];
         }
 
+        // Save the original filename for later use
+        $info['origFileName'] = $info['fileName'];
+
         // Now we generate the filename using the configured class
         if ($filenameGeneratorClass) {
             $filename = $filenameGeneratorClass::generate(
-                str_replace($path.DIRECTORY_SEPARATOR, '', $info['fileWithoutExt']),
-                $info['fileExtension']
+                str_replace($path.'/', '', $info['fileWithoutExt']),
+                $info['fileExtension'],
+                $object
             );
             $info['filePath'] = str_replace(
-                DIRECTORY_SEPARATOR.$info['fileName'],
-                DIRECTORY_SEPARATOR.$filename,
+                '/'.$info['fileName'],
+                '/'.$filename,
                 $info['filePath']
             );
             $info['fileName'] = $filename;
@@ -559,7 +562,7 @@ class UploadableListener extends MappedEventSubscriber
      */
     public function doMoveFile($source, $dest, $isUploadedFile = true)
     {
-        return $isUploadedFile ? move_uploaded_file($source, $dest) : copy($source, $dest);
+        return $isUploadedFile ? @move_uploaded_file($source, $dest) : @copy($source, $dest);
     }
 
     /**
